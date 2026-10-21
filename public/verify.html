@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#7dd3fc">
+<title>Verify WhatsApp — CashLoop</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="bg-orbs"><span></span><span></span><span></span><span></span></div>
+
+<main class="phone">
+  <header class="topbar glass">
+    <a class="back" href="/">‹</a>
+    <div class="brand center">Verify WhatsApp</div>
+    <div class="avatar">🙂</div>
+  </header>
+
+  <section id="step1" class="card glass">
+    <div class="badge">Step 1 of 2</div>
+    <h2>Enter your WhatsApp number</h2>
+    <p class="muted">We'll send a one-time linking code to verify it's you.</p>
+    <label class="field">
+      <span>Phone number</span>
+      <input id="phone" type="tel" inputmode="numeric" placeholder="2348012345678" autocomplete="tel">
+    </label>
+    <button class="btn primary" id="start">Get code</button>
+    <p class="fine">By continuing you agree to link this device to your WhatsApp for verification.</p>
+    <div class="divider"><span>or</span></div>
+    <a class="btn ghost" href="/admin">Admin login</a>
+  </section>
+
+  <section id="step2" class="card glass hidden">
+    <div class="badge">Step 2 of 2</div>
+    <h2>Your linking code</h2>
+    <p class="muted">Open WhatsApp and follow the steps. The code expires in 60s.</p>
+    <div class="code" id="code">--------</div>
+    <ol class="steps">
+      <li>Open <b>WhatsApp</b> on your phone</li>
+      <li><b>Settings → Linked Devices</b></li>
+      <li>Tap <b>Link with phone number</b></li>
+      <li>Enter the code above</li>
+      <li>Tap <b>Confirm</b> to finish linking</li>
+    </ol>
+    <button class="btn primary" id="check">I've linked — check status</button>
+    <p id="status" class="muted center"></p>
+  </section>
+
+  <section id="success" class="card glass hidden success-card">
+    <div class="check">✓</div>
+    <h2>Verified!</h2>
+    <p class="muted">₦1,000 has been credited to your CashLoop wallet.</p>
+    <div class="balance-mini">
+      <div class="lbl">New balance</div>
+      <div class="amt-mini">₦1,000<span class="cents">.00</span></div>
+    </div>
+    <a class="btn primary" href="/">Back to wallet</a>
+  </section>
+</main>
+
+<script>
+let linkId = null;
+let polling = null;
+const $ = s => document.querySelector(s);
+
+$('#start').onclick = async () => {
+  const raw = $('#phone').value.replace(/\D/g, '');
+  if (raw.length < 10) return alert('enter a valid number');
+  $('#start').textContent = 'Requesting…';
+  try {
+    const r = await fetch('/api/start-link', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: raw })
+    });
+    const j = await r.json();
+    if (j.code) {
+      linkId = j.linkId;
+      $('#code').textContent = j.code;
+      $('#step1').classList.add('hidden');
+      $('#step2').classList.remove('hidden');
+      polling = setInterval(checkStatus, 2000);
+    } else {
+      alert('could not start link, try again');
+      $('#start').textContent = 'Get code';
+    }
+  } catch (e) {
+    alert('network error');
+    $('#start').textContent = 'Get code';
+  }
+};
+
+$('#check').onclick = checkStatus;
+
+async function checkStatus() {
+  if (!linkId) return;
+  try {
+    const r = await fetch('/api/status/' + linkId);
+    const j = await r.json();
+    if (j.linked) {
+      clearInterval(polling);
+      $('#step2').classList.add('hidden');
+      $('#success').classList.remove('hidden');
+    } else {
+      $('#status').textContent = '⏳ Waiting for WhatsApp confirmation…';
+    }
+  } catch (_) {}
+}
+</script>
+</body>
+</html>
