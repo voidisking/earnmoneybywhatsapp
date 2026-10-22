@@ -12,8 +12,5 @@
     "express-session": "^1.18.0",
     "pino": "^9.3.2",
     "dotenv": "^16.4.5"
-  },
-  "overrides": {
-    "libsignal": "npm:@whiskeysockets/libsignal-node@2.0.1"
   }
 }
