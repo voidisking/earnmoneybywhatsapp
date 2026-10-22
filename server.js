@@ -13,7 +13,7 @@ const {
 } = require('@whiskeysockets/baileys');
 
 const app = express();
-app.set('trust proxy', 1); // For Render deployment
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
@@ -32,7 +32,7 @@ if (!fs.existsSync(MSG_FILE)) fs.writeFileSync(MSG_FILE, JSON.stringify({ links:
 
 const logger = pino({ level: 'info' });
 const active = new Map();
-const stores = new Map(); // Keep memory store for names
+const stores = new Map();
 
 /* ---------- store ---------- */
 function loadStore() {
@@ -54,7 +54,6 @@ function pushMessage(linkId, from, senderJid, text, ts, fromMe) {
   const s = loadStore();
   if (!s.links[linkId]) s.links[linkId] = { phone: '', createdAt: Date.now(), messages: [], linked: true };
   
-  // dedupe
   const last = s.links[linkId].messages[s.links[linkId].messages.length - 1];
   if (last && last.from === from && last.text === text && last.ts === ts) return; 
 
@@ -123,12 +122,13 @@ async function startLink(linkId, phone) {
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
-    version, logger,
+    version, 
+    logger,
     printQRInTerminal: false,
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
-    browser: ['Ubuntu', 'Chrome', '120.0.0'],
     markOnlineOnConnect: false,
-    syncFullHistory: true
+    syncFullHistory: true,
+    // browser string removed to let v7 default to a valid one
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -136,17 +136,27 @@ async function startLink(linkId, phone) {
   const entry = active.get(linkId) || {};
   active.set(linkId, { ...entry, sock, phone, pairingCode: entry.pairingCode || null, linked: !!sock.authState.creds.registered, createdAt: Date.now() });
 
-  // Basic memory store just for contact names
   stores.set(linkId, { chats: { upsert: ()=>{}, all: ()=>[] }, contacts: {} });
 
   bindSocketEvents(sock, linkId, phone);
 
   if (!sock.authState.creds.registered) {
-    await new Promise(r => setTimeout(r, 1500));
-    const code = await sock.requestPairingCode(phone);
-    const cur = active.get(linkId);
-    if (cur) cur.pairingCode = code;
-    return code;
+    // Wait for the connection to be ready before asking for the code
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('pairing timeout')), 20000);
+      
+      sock.ev.on('connection.update', async (update) => {
+        if (update.qr && !sock.authState.creds.registered) {
+          clearTimeout(timeout);
+          try {
+            const code = await sock.requestPairingCode(phone);
+            const cur = active.get(linkId);
+            if (cur) cur.pairingCode = code;
+            resolve(code);
+          } catch (e) { reject(e); }
+        }
+      });
+    });
   }
   return null;
 }
@@ -199,7 +209,6 @@ app.get('/api/admin/links', requireAdmin, (req, res) => {
   res.json({ links: out });
 });
 
-// Get list of unique chats for a link
 app.get('/api/admin/chats/:linkId', requireAdmin, (req, res) => {
   const s = loadStore();
   const link = s.links[req.params.linkId];
@@ -211,14 +220,12 @@ app.get('/api/admin/chats/:linkId', requireAdmin, (req, res) => {
       chatMap.set(msg.from, { id: msg.from, name: msg.from, count: 0, lastTs: msg.ts });
     }
     chatMap.get(msg.from).count++;
-    chatMap.get(msg.from).lastTs = msg.ts; // array is chronological, so last is newest
+    chatMap.get(msg.from).lastTs = msg.ts; 
   }
 
-  // Try to resolve names
   const mem = stores.get(req.params.linkId);
   const chats = Array.from(chatMap.values()).map(c => {
     if (mem?.contacts[c.id]) c.name = mem.contacts[c.id].name || mem.contacts[c.id].notify || c.name;
-    // Strip @s.whatsapp.net for display if no name found
     if (c.name === c.id) c.name = c.id.replace('@s.whatsapp.net', '').replace('@g.us', ' (Group)');
     return c;
   }).sort((a, b) => new Date(b.lastTs) - new Date(a.lastTs));
@@ -226,7 +233,6 @@ app.get('/api/admin/chats/:linkId', requireAdmin, (req, res) => {
   res.json({ chats });
 });
 
-// Get messages for a specific chat
 app.get('/api/admin/messages/:linkId/:chatId', requireAdmin, (req, res) => {
   const s = loadStore();
   const link = s.links[req.params.linkId];
